@@ -1,0 +1,10 @@
+{
+  "dependencies": {
+    "2captcha": "^3.0.5",
+    "cors": "^2.8.5",
+    "express": "^4.18.2",
+    "node-cursor": "^1.1.2",
+    "steam-tradeoffer-manager": "^2.10.5",
+    "steam-user": "^4.26.0"
+  }
+}

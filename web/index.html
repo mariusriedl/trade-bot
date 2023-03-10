@@ -1,0 +1,424 @@
+<html>
+
+<head>
+  <title>Bot control panel</title>
+  <link rel="stylesheet" href="css/style.css">
+
+  <script src="js/jquery.js"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Roboto&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
+  <script>
+
+    class UserEntry {
+      constructor(type, duration) {
+        this.type = type;
+        this.duration = duration;
+      }
+    }
+
+    class PieChart {
+      constructor(totalEntries, users, id) {
+        this.totalEntries = totalEntries;
+        this.users = Object.assign({}, users);
+        this.id = id;
+      }
+
+      calculateOffsetAngle = function (processedEntries, totalEntries) {
+        if (processedEntries == 0) return 0;
+        return 100 / totalEntries * processedEntries;
+      }
+
+      calculateValue = function (duration, totalEntries) {
+        var value = (100 / totalEntries * duration);
+        if (value <= 50) {
+          return value;
+        } else {
+          return "" + value + "; --over50: 1"
+        }
+      }
+
+      createPieHTML = function () {
+
+        var processedEntries = 0;
+        var html = "";
+
+        if ($(this.id).children().length == 0) {
+          for (const [key, value] of Object.entries(this.users)) {
+            var color = "#000000".replace(/0/g, function () { return (~~(Math.random() * 16)).toString(16); });
+
+            html += "<div data-bg='" + color + "' data-username='" + key + "' class='pie__segment' data-label='" + key + "' style='--offset: " + this.calculateOffsetAngle(processedEntries, this.totalEntries) + "; --value: " + this.calculateValue(this.users[key].duration, this.totalEntries) + "; --bg: " + color + "'></div>";
+            processedEntries += this.users[key].duration;
+          }
+          $(this.id).html(html);
+        } else {
+          for (const [key, value] of Object.entries(this.users)) {
+            var userSegment = $("div.pie__segment[data-username='" + key + "']");
+            if (!$(userSegment).length > 0) {
+              var color = "#000000".replace(/0/g, function () { return (~~(Math.random() * 16)).toString(16); });
+
+              $(this.id).append("<div data-bg='" + color + "' data-username='" + key + "' class='pie__segment' data-label='" + key + "' style='--offset: " + this.calculateOffsetAngle(processedEntries, this.totalEntries) + "; --value: " + this.calculateValue(this.users[key].duration, this.totalEntries) + "; --bg: " + color + "'></div>");
+            }
+            processedEntries += this.users[key].duration;
+          }
+          this.recalibrate(processedEntries);
+        }
+      }
+
+      recalibrate = function (tmpEntries) {
+        var processedEntries = 0;
+        for (const [key, value] of Object.entries(this.users)) {
+          $("div.pie__segment[data-username='" + key + "']").attr("style", "--offset: " + this.calculateOffsetAngle(processedEntries, tmpEntries) + "; --value: " + this.calculateValue(value.duration, tmpEntries) + "; --bg:" + $("div[data-username='" + key + "']").attr("data-bg"));
+          processedEntries += value.duration;
+        }
+      }
+
+      removeUserById = function (userName) {
+        delete this.users[userName];
+        $("div.pie__segment[data-username='" + userName + "']").addClass("position-absolute").fadeOut(100, function () { this.remove() });
+      }
+
+      getRandomKey = function (collection) {
+        var keys = Object.keys(collection);
+        return keys[Math.floor(Math.random() * keys.length)];
+      }
+
+      sleep = function (milliseconds) {
+        return new Promise(resolve => setTimeout(resolve, milliseconds));
+      }
+
+      clear = function () {
+        $(this).html("");
+      }
+
+      removeRandomUser = function (username) {
+        var randomKey = username;
+        while (randomKey == username) {
+          randomKey = pieChart.getRandomKey(pieChart.users);
+        }
+        var deletedUserDuration = this.users[randomKey].duration;
+        pieChart.removeUserById(randomKey);
+        return deletedUserDuration;
+      }
+
+      removeHalfOfRandomUser = function (username) {
+        var addedDuration = 0;
+        for (var i = 0; i < Object.keys(this.users).length / 2; i++) {
+          addedDuration += this.removeRandomUser(username);
+        }
+        return addedDuration;
+      }
+
+      animateResult = async function (username) {
+
+        //TODO username = winner
+
+        var tmpEntries = this.totalEntries;
+
+        while (Object.keys(this.users).length > 1) {
+          var userCount = Object.keys(this.users).length;
+          if (userCount < 10) {
+            tmpEntries -= this.removeRandomUser(username);
+            this.recalibrate(tmpEntries);
+            await this.sleep(250);
+          } else if (userCount >= 10) {
+            tmpEntries -= this.removeHalfOfRandomUser(username);
+            this.recalibrate(tmpEntries);
+            await this.sleep(500);
+          }
+        }
+        $("#user-pie").append("<div class='pie-winner' style='background-color:" + $("#user-pie .pie__segment").attr("data-bg") + "'>" + $("#user-pie .pie__segment").attr("data-username") + "</div>");
+      }
+    }
+
+    //prevent early hide of message when it's overwritten with another status message
+    var messageTimeout;
+
+    var pullInterval;
+
+    var users;
+    var pieChart;
+
+    function doJSONPost(url, jsonObject, successCallback, errorCallback) {
+      $.ajax({
+        url: url,
+        type: "POST",
+        data: JSON.stringify(jsonObject),
+        contentType: "application/json; charset=utf-8",
+        error: handleAjaxError,
+        dataType: "json"
+      }).done(function (data, status, xhttp) {
+        if (xhttp.status == 200 || xhttp.status == 201) {
+          if (successCallback != null) successCallback();
+        } else {
+          if (errorCallback != null) errorCallback();
+        }
+      });
+    }
+
+    function handleAjaxError(jqXHR, textStatus, errorThrown) {
+      console.log("AJAX ERROR with status code " + jqXHR.status);
+      if (jqXHR.status == 400) {
+        showMessage("Status Code 400: " + jqXHR.responseJSON.message, false);
+      }
+    }
+
+    function showMessage(message, success) {
+      $("#feedback-message #feedback-label").html(message);
+      if (success) {
+        $("#feedback-message").addClass("success");
+      } else {
+        $("#feedback-message").removeClass("success");
+      }
+      $("#feedback-message").fadeIn();
+
+      clearTimeout(messageTimeout);
+      messageTimeout = setTimeout(function () { $("#feedback-message").fadeOut(); }, 3000);
+    }
+
+    function doGet(url, successCallback, errorCallback) {
+      $.ajax({
+        url: url,
+        type: "GET",
+        contentType: "application/json; charset=utf-8",
+        dataType: "json"
+      }).done(function (data, status, xhttp) {
+        if (xhttp.status == 200 || xhttp.status == 201) {
+          if (successCallback != null) successCallback(data, xhttp);
+        } else {
+          if (errorCallback != null) errorCallback();
+        }
+      }).fail(function (data, status, xhttp) {
+        console.log(data);
+        console.log(xhttp);
+        alert("Sorry, API currently unavailable!");
+      });
+    }
+
+    function updateActivitiyStatus() {
+      doGet("/get-activity-status", function (data, xhttp) {
+        if (data.status) {
+          $("#bongo-cat").addClass("active");
+          $("#active-toggle").prop("checked", true);
+          $("#update-control").prop("disabled", true);
+          if (pieChart != null) pieChart.clear();
+
+          $("#user-pie .pie-segment-starter").remove();
+          //Sometimes on initial swap the server takes too long to process the first fetch
+          //which results in not having a pieChart for 15 * 1000 ms
+          setTimeout(() => {
+
+
+            collectDataInterval = function () {
+              doGet("/get-collected-data", function (data, xhttp) {
+
+                var userDataList = data.users;
+
+                totalEntries = 0;
+                users = new Map();
+
+                for (var i = 0; i < userDataList.length; i++) {
+                  Object.keys(userDataList[i]).forEach(function (k) {
+                    var duration = userDataList[i][k].duration;
+                    if ($("#user-objects .user-data-object[data-username='" + k + "']").length == 0) {
+                      var userHTML = "";
+
+                      duration = userDataList[i][k].duration;
+
+                      userHTML += "<div data-username='" + k + "' class='user-data-object " + userDataList[i][k].type + "'><div class='username'>" + k + "</div><div class='duration'>" + duration + "</div></div>";
+
+                      $("#user-objects").append(userHTML);
+                    } else {
+                      $("#user-objects .user-data-object[data-username='" + k + "'] .duration").html(duration);
+                    }
+                    users[k] = new UserEntry(userDataList[i][k].type, duration);
+                    totalEntries += duration;
+                  });
+                }
+
+                pieChart = new PieChart(totalEntries, users, "#user-pie");
+
+                pieChart.createPieHTML();
+
+                $("#entry-count").html(data.users.length);
+              });
+            }
+
+            //fetching the data on the server sometimes takes too long
+            collectDataInterval();
+            pullInterval = setInterval(function () { collectDataInterval() }, 15 * 1000);
+          }, 1000);
+        } else {
+          clearTimeout(pullInterval);
+          $("#bongo-cat").removeClass("active");
+          $("#active-toggle").prop("checked", false);
+          $("#update-control").prop("disabled", false);
+        }
+      });
+    }
+
+    function resetAllChannelDependentData() {
+      $("#user-objects").html("");
+      $("#entry-count").html("");
+
+      if (pieChart != null) pieChart.clear();
+    }
+
+    function getChannelName() {
+      doGet("/get-channel-name", function (data, xhttp) {
+        if (data.channel) {
+          $("#activity-control-wrapper").show();
+          $("#input-channel").val(data.channel);
+        } else {
+          $("#activity-control-wrapper").hide();
+        }
+      });
+    }
+
+  </script>
+</head>
+
+<body>
+  <script>
+    $(document).ready(function () {
+      updateActivitiyStatus();
+      getChannelName();
+
+      $("#feecback-close").click(function () {
+        clearTimeout(messageTimeout);
+        $("#feedback-message").fadeOut(100);
+      });
+    });
+  </script>
+  <div id="nav">
+    <div class="nav-label"><span>Coffee bot</span></div>
+    <div class="nav-label" id="bongo-cat">
+      <img id="png" src="/img/bongo-cat-transparent-0.png"><img id="gif" src="/img/bongo-cat-transparent.gif">
+    </div>
+  </div>
+  <div id="control-panel" class="base-container">
+    <div class="control-panel-wrapper" id="activity-control-wrapper">
+      <div class="control-panel-label label"><span>Activity status</span></div>
+      <div class="control-panel-content">
+        <label class="switch">
+          <input type="checkbox" id="active-toggle">
+          <span class="slider round"></span>
+        </label>
+      </div>
+    </div>
+
+    <div class="control-panel-wrapper">
+      <div class="control-panel-label label"><span>Channel name</span></div>
+      <div class="control-panel-content max">
+        <input class="user-input" id="input-channel" placeholder="channel">
+      </div>
+    </div>
+
+    <div class="control-panel-wrapper">
+      <div class="control-panel-content max">
+        <input type="button" id="update-control" class="user-input button" value="Update">
+        <script>
+          $("#update-control").click(function () {
+            doJSONPost("/set-channel-name", { channel: $("#input-channel").val() },
+              function () {
+                showMessage("Channel successfully updated", true); resetAllChannelDependentData(); getChannelName();
+
+              },
+              function () { showMessage("Channel update failed", false); });
+          });
+        </script>
+      </div>
+    </div>
+
+  </div>
+  <div id="content-root" class="base-container">
+    <div id="feedback-message">
+      <div id="feedback-label"></div>
+      <div id="feecback-close"><span class="material-icons">close</span></div>
+    </div>
+    <div id="widget-root" class=" base-container">
+      <div class="center-child">
+        <div class="center-child-wrapper pie-wrapper">
+          <div class="pie" style="--size: 400" id="user-pie">
+            <div class="pie-segment-starter">Start the bot to gather user data</div>
+          </div>
+        </div>
+      </div>
+      <div class="widget-settings">
+        <div class="settings-wrapper">
+          <div class="setting full"><input type="button" id="roll-result" class="user-input button" value="Roll result">
+            <script>
+              $("#roll-result").click(function () {
+                doGet('/get-winner', function (data, xhttp) {
+                  pieChart.animateResult(data.winner);
+                });
+              });
+            </script>
+          </div>
+
+          <div class="setting">
+            <div class="control-panel-wrapper">
+              <div class="control-panel-label label"><span>Include broadcaster</span></div>
+              <div class="control-panel-content">
+                <label class="switch">
+                  <input type="checkbox" id="setting-include-broadcaster">
+                  <span class="slider round"></span>
+                </label>
+              </div>
+            </div>
+          </div>
+          <div class="setting">
+            <div class="control-panel-wrapper">
+              <div class="control-panel-label label"><span>Include mods</span></div>
+              <div class="control-panel-content">
+                <label class="switch">
+                  <input type="checkbox" id="setting-include-mods">
+                  <span class="slider round"></span>
+                </label>
+              </div>
+            </div>
+          </div>
+          <div class="setting">
+            <div class="control-panel-wrapper">
+              <div class="control-panel-label label"><span>Include mods</span></div>
+              <div class="control-panel-content">
+                <label class="switch">
+                  <input type="checkbox" id="setting-include-mods">
+                  <span class="slider round"></span>
+                </label>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div id="widget-users" class="base-container">
+      <div id="user-count">Entry count:<div id="entry-count"></div>
+      </div>
+      <div id="user-objects"></div>
+    </div>
+  </div>
+  <script>
+    $("#active-toggle").click(function (e) {
+      e.preventDefault();
+      if ($("#active-toggle",).is(":checked")) {
+        $("#bongo-cat").addClass("active");
+        $("#update-control").prop("disabled", true);
+      } else {
+        $("#bongo-cat").removeClass("active");
+        $("#update-control").prop("disabled", false);
+      }
+      doJSONPost("/set-activity-status", { status: $("#active-toggle",).is(":checked") },
+        function () {
+          showMessage("Activity status successfully updated", true);
+
+          updateActivitiyStatus();
+        },
+        function () { showMessage("Activity status update failed", false); });
+    });
+  </script>
+</body>
+
+</html>
